@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>モバイルオーダー</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 16px; }
+    .cat { margin-top: 16px; font-weight: bold; }
+    .item { border-bottom: 1px solid #ddd; padding: 10px 0; display:flex; justify-content:space-between; align-items:center; }
+    button { padding: 6px 10px; }
+    #cart { margin-top: 18px; padding-top: 10px; border-top: 2px solid #000; }
+    .muted { color:#666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h2>メニュー</h2>
+  <div id="who" class="muted"></div>
+  <div id="menu">読み込み中...</div>
+
+  <div id="cart">
+    <h3>カート</h3>
+    <div id="cartItems">なし</div>
+    <div id="total" style="margin-top:8px;font-weight:bold;"></div>
+    <button onclick="submitOrder()">注文する</button>
+    <div id="result" style="margin-top:10px;"></div>
+  </div>
+
+<script>
+/** ★ここだけ入れ替える */
+const LIFF_ID = "2008810808-xkWW8qAt";
+const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyLyopcFXPrsyjCNf56oLh40iwM7OwBjoFm7XzxiMCRm6Leccseuwtceii6oX63_onSKw/exec"; // 例: https://script.google.com/macros/s/XXXX/exec
+
+let profile = null;
+let menu = [];
+let cart = {}; // { itemId: qty }
+
+async function init() {
+  await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+
+  if (!liff.isLoggedIn()) {
+    liff.login();
+    return;
+  }
+
+  profile = await liff.getProfile();
+  document.getElementById("who").innerText = `ログイン中：${profile.displayName}`;
+  await loadMenu();
+}
+
+async function loadMenu() {
+  const res = await fetch(`${GAS_API_URL}?action=menu`);
+  const data = await res.json();
+  menu = (data.items || []);
+
+  const menuDiv = document.getElementById("menu");
+  menuDiv.innerHTML = "";
+
+  const groups = groupBy(menu, x => x.category || "OTHER");
+  Object.keys(groups).forEach(cat => {
+    const h = document.createElement("div");
+    h.className = "cat";
+    h.textContent = cat;
+    menuDiv.appendChild(h);
+
+    groups[cat].forEach(item => {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div>
+          <div>${escapeHtml(item.name)}</div>
+          <div class="muted">¥${item.price}</div>
+        </div>
+        <div>
+          <button onclick="addToCart('${item.itemId}')">＋</button>
+          <button onclick="removeFromCart('${item.itemId}')">－</button>
+        </div>
+      `;
+      menuDiv.appendChild(div);
+    });
+  });
+
+  renderCart();
+}
+
+function addToCart(itemId) {
+  cart[itemId] = (cart[itemId] || 0) + 1;
+  renderCart();
+}
+
+function removeFromCart(itemId) {
+  if (!cart[itemId]) return;
+  cart[itemId] -= 1;
+  if (cart[itemId] <= 0) delete cart[itemId];
+  renderCart();
+}
+
+function renderCart() {
+  const cartDiv = document.getElementById("cartItems");
+  cartDiv.innerHTML = "";
+
+  let total = 0;
+  const ids = Object.keys(cart);
+
+  if (ids.length === 0) {
+    cartDiv.textContent = "なし";
+    document.getElementById("total").innerText = "";
+    return;
+  }
+
+  ids.forEach(id => {
+    const item = menu.find(m => m.itemId === id);
+    const qty = cart[id];
+    const price = item ? item.price : 0;
+    const line = price * qty;
+    total += line;
+
+    const div = document.createElement("div");
+    div.textContent = `${item ? item.name : id} x ${qty} = ¥${line}`;
+    cartDiv.appendChild(div);
+  });
+
+  document.getElementById("total").innerText = `合計：¥${total}`;
+}
+
+async function submitOrder() {
+  if (!profile) { alert("ログイン情報が取得できません"); return; }
+  if (Object.keys(cart).length === 0) { alert("カートが空です"); return; }
+
+  const items = Object.keys(cart).map(id => ({ itemId: id, qty: cart[id] }));
+
+  const res = await fetch(GAS_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "order",
+      userId: profile.userId,
+      displayName: profile.displayName,
+      items
+    })
+  });
+
+  const data = await res.json();
+  if (!data.ok) {
+    document.getElementById("result").innerText = `注文失敗：${data.error || "unknown"}`;
+    return;
+  }
+
+  document.getElementById("result").innerText = `注文完了！ 注文番号：${data.orderId}`;
+  cart = {};
+  renderCart();
+}
+
+function groupBy(arr, keyFn) {
+  return arr.reduce((acc, x) => {
+    const k = keyFn(x);
+    acc[k] = acc[k] || [];
+    acc[k].push(x);
+    return acc;
+  }, {});
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+  }[m]));
+}
+
+init();
+</script>
+</body>
+</html>
